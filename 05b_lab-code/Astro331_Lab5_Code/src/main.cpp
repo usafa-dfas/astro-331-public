@@ -19,14 +19,48 @@
 /*---------------------------------------------------------------------------------------------*/
 // Configuration:
 /*---------------------------------------------------------------------------------------------*/
-// SparkFun Thing Plus C (ESP32 WROOM) hardware SPI bus. Do not name these
-// SCK/MISO/MOSI -- the board variant already defines those symbols.
+// This code runs on either KestrelSAT MCU. You choose the board in
+// platformio.ini (the "default_envs" line); PlatformIO then tells the compiler
+// which board it is building for, and the matching block below is used.
+// Do not name the pins SCK/MISO/MOSI -- the board files already use those names.
+
+#if defined(ARDUINO_ADAFRUIT_FEATHER_RP2040_ADALOGGER)
+// ---- Adafruit Feather RP2040 Adalogger (env:adalogger_rp2040) ----
+// Camera wire   ->  Adalogger pin label (RP2040 GPIO)
+//   SCK         ->  SCK  (GP14)
+//   MISO        ->  MI   (GP8)
+//   MOSI        ->  MO   (GP15)
+//   CS          ->  12   (GP12)
+#define BOARD_NAME    "Feather RP2040 Adalogger"
+#define PIN_SPI_SCK   14
+#define PIN_SPI_MISO   8
+#define PIN_SPI_MOSI  15
+#define PIN_CAM_CS    12  // Chip select for the Arducam Mega
+#define PIN_SD_CS     23  // On-board microSD chip select. The card is on its own
+                          // SPI bus on this board, so it can't interfere with the
+                          // camera; we still park it HIGH to be safe.
+
+#elif defined(ESP32)
+// ---- SparkFun Thing Plus C, ESP32 WROOM (env:esp32thing_plus) ----
+// Camera wire   ->  Thing Plus pin (ESP32 GPIO)
+//   SCK         ->  18
+//   MISO        ->  19
+//   MOSI        ->  23
+//   CS          ->  12
+#define BOARD_NAME    "Thing Plus ESP32"
 #define PIN_SPI_SCK   18
 #define PIN_SPI_MISO  19
 #define PIN_SPI_MOSI  23
-
 #define PIN_CAM_CS    12  // Chip select for the Arducam Mega
 #define PIN_SD_CS      5  // Chip select for the on-board microSD (shares the bus)
+
+#else
+#error "Unsupported board. Set default_envs in platformio.ini to esp32thing_plus or adalogger_rp2040."
+#endif
+
+// SPI speed and format for the camera. 1 MHz is the ESP32's default speed and
+// is well within the Arducam Mega's limit (8 MHz).
+#define CAM_SPI_CLOCK_HZ  1000000
 
 // Arducam Mega registers used for the pre-flight bus check.
 #define CAM_REG_SENSOR_ID     0x40
@@ -143,8 +177,32 @@ void setup() {
     myUart.arducamUartBegin(115200);
     delay(200);
 
+#if defined(ARDUINO_ARCH_RP2040)
+    // The RP2040 talks to the PC over its own USB port, so opening the port on
+    // the PC does NOT restart the board (it does on the Thing Plus). Wait up to
+    // 10 s for the PC to connect so the start-up messages below aren't lost.
+    while (!Serial && millis() < 10000) {
+        delay(10);
+    }
+#endif
+
+    myUart.send_data_pack(7, "[INFO] MCU: " BOARD_NAME);
     myUart.send_data_pack(7, "[INFO] Starting SPI..");
+#if defined(ARDUINO_ARCH_RP2040)
+    // RP2040: tell the SPI port which pins to use, then start it.
+    SPI.setSCK(PIN_SPI_SCK);
+    SPI.setRX(PIN_SPI_MISO);   // RX = data coming IN to the MCU (MISO)
+    SPI.setTX(PIN_SPI_MOSI);   // TX = data going OUT of the MCU (MOSI)
+    SPI.begin();
+#else
+    // ESP32: the pins are given directly to SPI.begin().
     SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, PIN_CAM_CS);
+#endif
+    // Set the SPI speed, bit order, and mode once. The camera library sends
+    // bytes with SPI.transfer() and never sets these itself; the RP2040 will
+    // not send anything until they have been set.
+    SPI.beginTransaction(SPISettings(CAM_SPI_CLOCK_HZ, MSBFIRST, SPI_MODE0));
+    SPI.endTransaction();
 
     myUart.send_data_pack(7, "[INFO] Starting Camera..");
     cameraReady = cameraOnBus();

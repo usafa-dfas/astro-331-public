@@ -15,7 +15,9 @@
 
 void arducamSpiBegin(void)
 {
-    return SPI.begin(); //SPI.begin(18,19,23);
+    // KestrelSAT edit: no "return" here, because newer ESP32 cores make
+    // SPI.begin() return a bool and this function returns nothing.
+    SPI.begin();
 }
 
 uint8_t arducamSpiTransfer(uint8_t data)
