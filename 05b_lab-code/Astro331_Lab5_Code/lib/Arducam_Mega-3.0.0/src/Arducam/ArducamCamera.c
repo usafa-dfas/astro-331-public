@@ -279,9 +279,12 @@ void updateCameraInfo(ArducamCamera* camera){
 
 void cameraInit(ArducamCamera* camera)
 {
-    arducamSpiBegin();
-    arducamCsOutputMode(camera->csPin);
-    arducamSpiCsPinLow(camera->csPin);
+    // KestrelSAT edit: this runs inside the Arducam_Mega constructor, i.e. when
+    // the global myCAM object is created -- before setup() and before the
+    // Arduino core and its SPI object are ready. Starting SPI here crashes the
+    // RP2040 before its USB port comes up. main.cpp starts SPI and sets up the
+    // CS pin in setup() instead, so nothing is done here.
+    (void)camera;
 }
 
 void cameraGetSensorConfig(ArducamCamera* camera)
