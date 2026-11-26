@@ -199,15 +199,24 @@ uint8_t ArducamLink::uartCommandProcessing(Arducam_Mega* myCAM, uint8_t* command
 void ArducamLink::arducamUartWrite(uint8_t data)
 {
     SerialWrite(data);
+#if !defined(ARDUINO_ARCH_RP2040)
+    // Thing Plus (ESP32): short pause after each byte, as in Arducam's example.
+    // The RP2040's native USB has its own flow control, so it needs no pause.
     delayUs(12);
+#endif
 }
 
 void ArducamLink::arducamUartWriteBuff(uint8_t* buff, uint16_t length)
 {
-    // SerialWriteBuff(buff, length);
-    // delayUs(12);
+#if defined(ARDUINO_ARCH_RP2040)
+    // RP2040: hand the whole block to USB in one call. Sending byte-by-byte
+    // costs a USB transfer per byte and was the main limit on photo speed.
+    SerialWriteBuff(buff, length);
+#else
+    // Thing Plus (ESP32): send one byte at a time (with the pause above).
     for (uint16_t i = 0; i < length; i++)
         arducamUartWrite(buff[i]);
+#endif
 }
 
 void ArducamLink::printf(char* buff)

@@ -39,6 +39,9 @@
 #define PIN_SD_CS     23  // On-board microSD chip select. The card is on its own
                           // SPI bus on this board, so it can't interfere with the
                           // camera; we still park it HIGH to be safe.
+// SPI clock for the camera: 8 MHz is the Arducam Mega's maximum. If photos come
+// back corrupted (e.g. with long jumper wires), try 4000000.
+#define CAM_SPI_CLOCK_HZ  8000000
 
 #elif defined(ESP32)
 // ---- SparkFun Thing Plus C, ESP32 WROOM (env:esp32thing_plus) ----
@@ -53,14 +56,14 @@
 #define PIN_SPI_MOSI  23
 #define PIN_CAM_CS    12  // Chip select for the Arducam Mega
 #define PIN_SD_CS      5  // Chip select for the on-board microSD (shares the bus)
+// SPI clock for the camera: 1 MHz (the ESP32 default). Photo speed on this board
+// is limited by the 115200-baud serial link, not by SPI.
+#define CAM_SPI_CLOCK_HZ  1000000
 
 #else
 #error "Unsupported board. Set default_envs in platformio.ini to esp32thing_plus or adalogger_rp2040."
 #endif
 
-// SPI speed and format for the camera. 1 MHz is the ESP32's default speed and
-// is well within the Arducam Mega's limit (8 MHz).
-#define CAM_SPI_CLOCK_HZ  1000000
 
 // Arducam Mega registers used for the pre-flight bus check.
 #define CAM_REG_SENSOR_ID     0x40
@@ -129,9 +132,7 @@ uint8_t readBuffer(uint8_t* imagebuf, uint8_t length)
     }
     if (jpegHeadFlag == 1) {
         readImageLength += length;
-        for (uint8_t i = 0; i < length; i++) {
-            myUart.arducamUartWrite(imagebuf[i]);
-        }
+        myUart.arducamUartWriteBuff(imagebuf, length);
     }
     if (readImageLength == myCAM.getTotalLength()) {
         jpegHeadFlag = 0;
