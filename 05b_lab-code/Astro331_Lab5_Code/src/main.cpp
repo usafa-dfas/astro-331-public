@@ -15,6 +15,9 @@
 #include "ArducamLink.h"
 #include "Arducam_Mega.h"
 #include "SPI.h"
+#if defined(ARDUINO_ARCH_RP2040)
+#include <Adafruit_NeoPixel.h>  // drives the Adalogger's RGB status LED
+#endif
 
 /*---------------------------------------------------------------------------------------------*/
 // Configuration:
@@ -30,12 +33,12 @@
 //   SCK         ->  SCK  (GP14)
 //   MISO        ->  MI   (GP8)
 //   MOSI        ->  MO   (GP15)
-//   CS          ->  12   (GP12)
+//   CS          ->  25   (GP25, the pin right next to SCK)
 #define BOARD_NAME    "Feather RP2040 Adalogger"
 #define PIN_SPI_SCK   14
 #define PIN_SPI_MISO   8
 #define PIN_SPI_MOSI  15
-#define PIN_CAM_CS    12  // Chip select for the Arducam Mega
+#define PIN_CAM_CS    25  // Chip select for the Arducam Mega
 #define PIN_SD_CS     23  // On-board microSD chip select. The card is on its own
                           // SPI bus on this board, so it can't interfere with the
                           // camera; we still park it HIGH to be safe.
@@ -64,6 +67,15 @@
 #error "Unsupported board. Set default_envs in platformio.ini to esp32thing_plus or adalogger_rp2040."
 #endif
 
+// RGB status LED (the small multi-color LED on the board):
+//   RED   = starting up, or the camera was not found (check wiring)
+//   GREEN = camera ready, waiting for a command from the PC
+//   BLUE  = taking a photo and sending it to the PC
+//   CYAN  = live preview (video) is streaming to the PC
+// STATUS_LEVEL sets the brightness, 0-255. Full brightness (255) is
+// uncomfortably bright to look at on the bench.
+#define STATUS_LEVEL  40
+
 
 // Arducam Mega registers used for the pre-flight bus check.
 #define CAM_REG_SENSOR_ID     0x40
@@ -84,9 +96,26 @@ uint32_t readImageLength = 0;
 uint8_t jpegHeadFlag     = 0;
 bool cameraReady         = false;
 
+#if defined(ARDUINO_ARCH_RP2040)
+// The Adalogger's RGB LED is one "NeoPixel" on pin PIN_NEOPIXEL (GP17).
+Adafruit_NeoPixel statusPixel(1, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
+#endif
+
 /*---------------------------------------------------------------------------------------------*/
 // Functions:
 /*---------------------------------------------------------------------------------------------*/
+
+// Set the RGB status LED. Each color is 0 (off) to 255 (full brightness).
+void setStatusColor(uint8_t red, uint8_t green, uint8_t blue)
+{
+#if defined(ARDUINO_ARCH_RP2040)
+    statusPixel.setPixelColor(0, statusPixel.Color(red, green, blue));
+    statusPixel.show();
+#else
+    // Thing Plus: the ESP32 core has a built-in function for its RGB LED.
+    neopixelWrite(RGB_BUILTIN, red, green, blue);
+#endif
+}
 
 // Read one Mega register directly, mirroring the driver's own bus transaction.
 // Used only to confirm the camera is on the bus before handing control to the
@@ -142,8 +171,10 @@ uint8_t readBuffer(uint8_t* imagebuf, uint8_t length)
     return sendFlag;
 }
 
+// Called by the camera library when a live preview is stopped.
 void stop_preivew()
 {
+    setStatusColor(0, STATUS_LEVEL, 0);  // GREEN: back to waiting
     readImageLength = 0;
     jpegHeadFlag    = 0;
     uint32_t len    = 9;
@@ -165,6 +196,10 @@ void stop_preivew()
 void setup() {
     pinMode(LED_BUILTIN, OUTPUT);
     digitalWrite(LED_BUILTIN, HIGH);
+#if defined(ARDUINO_ARCH_RP2040)
+    statusPixel.begin();
+#endif
+    setStatusColor(STATUS_LEVEL, 0, 0);  // RED: starting up
 
     // Park both chip selects inactive (HIGH) before the bus comes up, so the
     // on-board microSD card cannot drive MISO while we talk to the camera.
@@ -218,6 +253,7 @@ void setup() {
     myUart.send_data_pack(8, "[INFO] Mega Initialized!");
     myCAM.registerCallBack(readBuffer, 200, stop_preivew);
     digitalWrite(LED_BUILTIN, HIGH);
+    setStatusColor(0, STATUS_LEVEL, 0);  // GREEN: camera ready
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////
@@ -246,7 +282,17 @@ void loop() {
                 commandLength++;
             }
             myUart.arducamFlush();
-            myUart.uartCommandProcessing(&myCAM, commandBuff);
+
+            uint8_t command = commandBuff[0];
+            if (command == TAKE_PICTURE) {
+                setStatusColor(0, 0, STATUS_LEVEL);             // BLUE: taking a photo
+            }
+            myUart.uartCommandProcessing(&myCAM, commandBuff);  // the photo is sent in here
+            if (command == TAKE_PICTURE) {
+                setStatusColor(0, STATUS_LEVEL, 0);             // GREEN: done, waiting
+            } else if (command == SET_VIDEO_RESOLUTION) {
+                setStatusColor(0, STATUS_LEVEL, STATUS_LEVEL);  // CYAN: preview streaming
+            }
             commandLength = 0;
         }
     }
